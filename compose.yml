@@ -1,0 +1,13 @@
+services:
+  server:
+    build:
+      dockerfile: dockerfile
+    init: true
+    networks:
+      doc-frontend-network:
+    env_file: .env
+    ports:
+      - "1234:1234"
+
+networks:
+  doc-frontend-network:
