@@ -1,0 +1,141 @@
+version: '3'
+
+vars:
+  DEV_COMPOSE: docker compose -f docker/compose.yml -f docker/compose.dev.yml
+  PROD_COMPOSE: docker compose -f docker/compose.yml -f docker/compose.prod.yml
+
+tasks:
+  default:
+    desc: List available tasks
+    cmd: task --list
+
+  network:create:
+    desc: Create The Shared doc-frontend-network If Missing
+    cmd: docker network create doc-frontend-network
+    status:
+      - docker network inspect doc-frontend-network
+
+  dev:build:
+    desc: Build Development Image
+    cmd: '{{.DEV_COMPOSE}} build'
+
+  dev:up:
+    desc: Run Development Environment
+    deps: [network:create]
+    cmd: '{{.DEV_COMPOSE}} up --build -d'
+
+  dev:up:watch:
+    desc: Start Development Environment And Rebuild On Dependency Changes
+    deps: [network:create]
+    cmd: '{{.DEV_COMPOSE}} up --build --watch server'
+    interactive: true
+
+  dev:down:
+    desc: Shut Down The Development Environment
+    cmd: '{{.DEV_COMPOSE}} down'
+
+  dev:start:
+    desc: Start Stopped Development Containers
+    deps: [network:create]
+    cmd: '{{.DEV_COMPOSE}} start'
+
+  dev:stop:
+    desc: Stop Development Containers
+    cmd: '{{.DEV_COMPOSE}} stop'
+
+  dev:restart:
+    desc: Restart Development Containers
+    deps: [network:create]
+    cmd: '{{.DEV_COMPOSE}} restart'
+
+  dev:rebuild:
+    desc: Rebuild And Recreate Development Containers
+    deps: [network:create]
+    cmd: '{{.DEV_COMPOSE}} up --build --force-recreate --renew-anon-volumes -d'
+
+  dev:delete:
+    desc: Delete Development Environment Including Volumes
+    prompt: This will delete the development node_modules volume. Continue?
+    cmd: '{{.DEV_COMPOSE}} down --volumes'
+
+  dev:logs:
+    desc: Follow Development Server Logs
+    cmd: '{{.DEV_COMPOSE}} logs -f server'
+
+  dev:ps:
+    desc: Show Development Container Status
+    cmd: '{{.DEV_COMPOSE}} ps'
+
+  dev:shell:
+    desc: Open Development Server Shell
+    cmd: '{{.DEV_COMPOSE}} exec server sh'
+    interactive: true
+
+  dev:stats:
+    desc: Show Development Resource Usage
+    cmd: '{{.DEV_COMPOSE}} stats'
+
+  dev:config:
+    desc: Validate Development Compose Configuration
+    cmd: '{{.DEV_COMPOSE}} config --quiet'
+
+  prod:build:
+    desc: Build Production Environment
+    cmd: '{{.PROD_COMPOSE}} build'
+
+  prod:push:
+    desc: Push The Production Image To The Registry
+    cmd: '{{.PROD_COMPOSE}} push'
+
+  prod:pull:
+    desc: Pull Production Service Images
+    cmd: '{{.PROD_COMPOSE}} pull'
+
+  prod:up:
+    desc: Run Production Environment
+    deps: [network:create]
+    cmd: '{{.PROD_COMPOSE}} up -d'
+
+  prod:down:
+    desc: Shut Down The Production Environment
+    cmd: '{{.PROD_COMPOSE}} down'
+
+  prod:start:
+    desc: Start Stopped Production Containers
+    deps: [network:create]
+    cmd: '{{.PROD_COMPOSE}} start'
+
+  prod:stop:
+    desc: Stop Production Containers
+    cmd: '{{.PROD_COMPOSE}} stop'
+
+  prod:restart:
+    desc: Restart Production Containers
+    deps: [network:create]
+    cmd: '{{.PROD_COMPOSE}} restart'
+
+  prod:rebuild:
+    desc: Rebuild And Recreate Production Containers
+    deps: [network:create]
+    cmd: '{{.PROD_COMPOSE}} up --build --force-recreate -d'
+
+  prod:logs:
+    desc: Follow Production Server Logs
+    cmd: '{{.PROD_COMPOSE}} logs -f server'
+
+  prod:ps:
+    desc: Show Production Container Status
+    cmd: '{{.PROD_COMPOSE}} ps'
+
+  prod:shell:
+    desc: Open Production Server Shell
+    cmd: '{{.PROD_COMPOSE}} exec server sh'
+    interactive: true
+
+  prod:stats:
+    desc: Show Production Resource Usage
+    cmd: '{{.PROD_COMPOSE}} stats'
+
+  prod:config:
+    desc: Validate Production Compose Configuration
+    cmd: '{{.PROD_COMPOSE}} config --quiet'

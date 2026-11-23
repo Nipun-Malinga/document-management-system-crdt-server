@@ -36,6 +36,11 @@ coverage
 jest-cache
 jest-coverage
 
-# Docker
-Dockerfile.*
-docker-compose.*
+# Docker (Dockerfiles are passed to the builder separately)
+docker/
+taskfile.yml
+
+# Not needed in the image; the production build compiles its own dist/
+.git
+dist
+test

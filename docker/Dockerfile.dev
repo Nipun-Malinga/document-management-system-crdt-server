@@ -1,0 +1,14 @@
+FROM node:lts-alpine
+
+WORKDIR /workspace
+
+# Dependencies are installed into the image; compose mounts the source over /workspace
+# and keeps node_modules in a named volume seeded from this layer.
+COPY package*.json ./
+RUN npm ci
+
+ENV NODE_ENV=development
+
+EXPOSE 1234
+
+CMD ["npm", "run", "dev"]

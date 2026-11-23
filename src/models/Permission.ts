@@ -1,8 +1,6 @@
-type permission = 'UNAUTHORIZED' | 'READ_ONLY' | 'READ_WRITE' | 'ADMIN';
+export type PermissionLevel = 'UNAUTHORIZED' | 'READ_ONLY' | 'READ_WRITE' | 'ADMIN';
 
+/** Subset of the backend's PermissionResponse that this server reads. */
 export interface Permission {
-  userId: number;
-  documentId: string;
-  branchId: string;
-  permission: permission;
+  permission: PermissionLevel;
 }

@@ -1,0 +1,12 @@
+name: doc-manager-crdt-server-prod
+
+services:
+  server:
+    image: nipunmalinga/doc-manager-crdt-server:latest
+    build:
+      dockerfile: docker/Dockerfile.prod
+    env_file:
+      - ../.env.prod
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1234:1234"

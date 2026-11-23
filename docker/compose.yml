@@ -1,0 +1,21 @@
+name: doc-manager-crdt-server
+
+services:
+  server:
+    build:
+      context: ..
+    init: true
+    environment:
+      # The backend's alias on the shared network (overrides SERVER_URL from env files).
+      SERVER_URL: http://backend:8080/api
+    networks:
+      doc-frontend-network:
+        aliases:
+          - crdt
+
+networks:
+  # Shared across the backend, CRDT server and frontend projects. External so no project
+  # owns it; `task network:create` (run automatically by the up/start tasks) creates it.
+  doc-frontend-network:
+    name: doc-frontend-network
+    external: true

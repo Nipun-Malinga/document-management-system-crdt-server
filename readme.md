@@ -1,194 +1,90 @@
-# CRDT Server — Yjs + Hocuspocus
+# CRDT Server (Yjs + Hocuspocus)
 
-A lightweight collaboration backend powering real-time document editing.
+This is the real-time collaboration server for the Document Management System.
 
-This server maintains Yjs documents, enforces permission rules, and syncs changes between multiple connected clients using the Hocuspocus WebSocket server.
+- **Solo documents** (not shared) are read and written by the frontend directly over the Spring REST API.
+- **Collaborative documents** (shared with at least one user) are edited only through this server. The backend rejects REST content writes for them with `409 Conflict`.
 
-## Features
+```
+Browser (Tiptap + HocuspocusProvider, user JWT)
+   │ ws(s)  room = documents/{documentId}/branches/{branchId}
+   ▼
+CRDT server
+   onAuthenticate  ─► GET /api/permissions/documents/{d}/branches/{b}    (user's Bearer JWT)
+   onLoadDocument  ─► GET /api/internal/crdt/documents/{d}/branches/{b}  (X-Internal-Secret)
+   onStoreDocument ─► PUT /api/internal/crdt/documents/{d}/branches/{b}  (X-Internal-Secret)
+   ▼
+Spring backend → document_contents.content (Tiptap JSON string)
+```
 
-- **CRDT-based collaboration** using Yjs for conflict-free editing
-- **Hocuspocus provider** for WebSocket transport, awareness, and persistence hooks
-- **Document permission validation** before room join
-- **On-demand snapshot persistence** to upstream Document API
-- **Content model abstraction** for consistent data contracts with your main backend API
-- **Simple horizontal scaling** — clients remain consistent regardless of ordering
+## How it works
 
-## Folder Overview
+- **Authentication** (`onAuthenticate`):
+  1. The room name is validated against `documents/{uuid}/branches/{uuid}`.
+  2. The user's token is checked against the backend's permissions endpoint.
+  3. `UNAUTHORIZED`, a missing permission, or any error throws, and the connection is rejected.
+  4. `READ_ONLY` connections are marked `readOnly`, so the server drops their document updates.
+- **Load** (`onLoadDocument`): the stored Tiptap JSON is converted to a `Y.Doc` with `TiptapTransformer`. If the backend is unreachable, loading throws. This is deliberate: serving an empty doc and saving it back later would wipe real content.
+- **Store** (`onStoreDocument`): debounced, 2s by default and at most 10s. The `Y.Doc` is converted back to Tiptap JSON and saved through the internal endpoint using the shared secret. Saving does not depend on any user's token expiry.
+- **Shutdown:** on SIGINT/SIGTERM, Hocuspocus flushes pending stores before exiting.
+
+### Schema parity
+
+`src/config/index.ts` must mirror the frontend's `editorExtensions(true)` in `src/features/editor/configs/EditorConfigs.ts`. If a node, mark or attribute is missing here, it is silently dropped when a room loads. The frontend's `enableContentCheck` then disables collaboration. `npm test` round-trips a fixture of every node, mark and attribute through the server schema and fails on any loss.
+
+### Known limitation: JSON-only persistence
+
+Only Tiptap JSON is stored, not the Yjs binary state. Each time a room loads, the `Y.Doc` is rebuilt with a new CRDT history.
+
+If this server restarts while a browser tab stays connected, that tab's old `Y.Doc` could merge with the rebuilt one and duplicate content. The frontend guards against this by recreating its `Y.Doc` when the connection drops. Persisting the Yjs state is the planned long-term fix.
+
+## Environment
+
+| Variable | Required | Description |
+|---|---|---|
+| `SERVER_URL` | yes | Backend base URL **including `/api`**, e.g. `http://localhost:8080/api`. In Docker it is set by `docker/compose.yml` to `http://backend:8080/api` |
+| `CRDT_INTERNAL_SECRET` | yes | Shared secret; must equal the backend's `CRDT_INTERNAL_SECRET` (`openssl rand -hex 32`) |
+| `PORT` | no | WebSocket port (default `1234`) |
+| `REQUEST_TIMEOUT_MS` | no | Backend request timeout (default `5000`) |
+
+The server exits on startup if a required variable is missing.
+
+## Usage
 
 ```bash
-├── config
-│   └── index.ts           # configuration loader, env parsing
-├── index.ts               # Hocuspocus server bootstrap
-├── models
-│   ├── Content.ts         # Yjs content metadata model (snapshot, versioning)
-│   └── Permission.ts      # Access-level model (READ, WRITE, NONE)
-├── services
-│   └── apiService.ts      # external REST API communicator (token, doc fetch/store)
-└── utils
-                          # small helpers (logging, safe JSON, debounce, etc.)
+npm install
+npm run dev                  # tsx watch (reloads on change)
+npm test                     # schema round-trip test
+npm run build && npm start   # compiles to dist/ and runs it
 ```
 
-## Environment Variables
+### Docker (via [Task](https://taskfile.dev))
 
-Create a `.env` file:
-
-```env
-SERVER_URL=            # base URL of your main 
-PORT=1234              # CRDT server port
-```
-
-`SERVER_URL` is required — used by apiService to fetch permissions, snapshots, and persist updates.
-
-## Installation & Usage
-
-### Install
+Docker files live in `docker/`. The base `compose.yml` is combined with `compose.dev.yml` (reads `.env`) or `compose.prod.yml` (reads `.env.prod`; see `.env.prod.example`).
 
 ```bash
-npm install   # or npm / yarn
+task dev:up        # source bind-mounted, reloads with tsx watch
+task dev:logs
+task dev:down
+task prod:build    # docker/Dockerfile.prod → nipunmalinga/doc-manager-crdt-server
+task prod:up
+task --list        # all tasks
 ```
 
-### Run in Dev
+The frontend connects with `VITE_COLLABORATIVE_CRDT_SERVER_WEBSOCKET_URL` (`ws://localhost:1234` in development, `wss://…` behind the reverse proxy in production).
 
-```bash
-npm run dev
-```
+## Deployment notes
 
-### Build & Run Production
-
-```bash
-npm run build
-pnpm start
-```
-
-Your WebSocket endpoint will typically be:
-
-```bash
-ws://localhost:<PORT>
-```
-
-Configure your frontend Hocuspocus provider with that URL.
-
-## Architecture
-
-### 1. Server Bootstrap (index.ts)
-
-`index.ts` constructs a Hocuspocus server instance:
-
-- Room lifecycle hooks (`onConnect`, `onAuthenticate`, `onLoadDocument`, `onStoreDocument`)
-- Awareness broadcast: user cursors, selection, presence
-- Permission enforcement via Permission model + apiService
-- Snapshot merge after clients disconnect or periodically
-
-### 2. Document Persistence
-
-Handled inside `onLoadDocument` and `onStoreDocument`:
-
-**Load:**
-The server fetches the latest stored document content (`Content.ts` DTO) from your main backend using `apiService.fetchDocumentContent(publicId)` and loads it into a `Y.Doc` instance.
-
-**Store:**
-When changes occur—or when the last client leaves—the Yjs update is encoded (usually `Y.encodeStateAsUpdate(doc)`) and persisted back via `apiService.saveDocumentSnapshot(...)`.
-
-This ensures the CRDT server remains stateless between restarts if your main API handles persistence.
-
-### 3. Permission Enforcement
-
-`Permission.ts` defines allowed operations.
-
-Flow inside `onAuthenticate`:
-
-1. Client passes document ID + access token
-2. CRDT server queries the backend (`apiService.getDocumentPermission`)
-3. If permission is not sufficient for write/read, connection is rejected
-4. Awareness fields (userId, name, etc.) are allowed only for authorized users
-
-### 4. Awareness / Presence
-
-Hocuspocus forwards Yjs awareness updates:
-
-- Remote cursors
-- Online user list
-- Editor selection markers
-
-Use throttling to limit high-volume messages and avoid unnecessary backend calls.
-
-## External API Calls (apiService.ts)
-
-`apiService.ts` wraps all interactions with your main backend:
-
-Example responsibilities:
-
-- `getDocumentPermission(documentId, token)`
-- `fetchDocumentContent(documentId)`
-- `saveDocumentSnapshot(documentId, yjsBinaryUpdate)`
-
-Usually implemented using axios or undici/fetch, with retries and exponential backoff for store operations.
-
-### Recommended Patterns
-
-- Always validate server responses
-- Implement timeouts (5–10 seconds) to avoid blocking the event loop
-- Use structured logging
-- Cache permission responses for short intervals (<30 seconds) to reduce load
-
-## Utils
-
-Typical utilities kept here:
-
-- `logger.ts` — timestamped logs
-- `safeJson.ts` — robust parsing
-- `debounce.ts` — used for delayed persistence
-- `yjsHelpers.ts` — encode/decode helpers
-
-Keep utils pure and small.
-
-## Scaling Considerations
-
-Hocuspocus supports distributed scaling using Redis Awareness + Redis Persistence adapters.
-
-If you plan to run multiple CRDT servers, add a Redis instance and enable:
-
-- RedisPersistence
-- RedisPubSub for awareness
-
-Otherwise, you risk partitioned states between servers.
-
-## Security Notes
-
-- Never trust client-sent document IDs — always verify with backend
-- Reject clients without valid tokens before joining room
-- Never allow direct access to stored snapshots without verifying `Permission.WRITE` / `Permission.READ`
-- Rate-limit `onConnect` to prevent abuse
-- Consider signing all server-to-backend requests with a shared secret (`API_KEY`)
-
-## Testing
-
-Suggested tests:
-
-- Load existing document → ensure correct Yjs state
-- Write updates → persist snapshot → reload → documents match
-- Permission logic: unauthorized users cannot join
-- Awareness events propagate correctly between two test clients
-- Server restart keeps consistency after snapshot
-
-Use Hocuspocus test utilities or plain WebSocket clients.
-
-## Deployment
-
-A minimal Node environment is enough:
-
-- Deploy as standalone container (recommended)
-- Configure readiness/liveness health checks
-- Store persistent snapshots in your main backend or an object store (S3, MinIO)
-- For heavy load, add Redis adapters for clustering
-
-### Example Dockerfile (sketch)
-
-```dockerfile
-FROM node:20-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm install --omit=dev
-COPY . .
-CMD ["node", "dist/index.js"]
-```
+- `docker/compose.prod.yml` binds to `127.0.0.1:1234`. Put a reverse proxy (nginx) in front that forwards WebSocket upgrades:
+  ```nginx
+  location /collab/ {
+      proxy_pass http://127.0.0.1:1234/;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+      proxy_read_timeout 3600s;
+  }
+  ```
+- Don't expose the backend's `/api/internal/**` publicly. Block it at the proxy (`location /api/internal/ { deny all; }`), on top of the secret check.
+- All three projects (backend, CRDT server, frontend) join the shared external Docker network `doc-frontend-network` (created by `task network:create`, which the up/start tasks run automatically) with the aliases `backend`, `crdt` and `frontend`. Use the aliases rather than the compose service names: the backend and this server are both named `server`.
+- This server keeps rooms in memory, so run a single instance. Running several would need the Hocuspocus Redis extension.

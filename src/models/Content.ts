@@ -1,3 +1,3 @@
 export interface Content {
-  content: string;
+  content: string | null;
 }
